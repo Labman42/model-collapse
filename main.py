@@ -77,7 +77,7 @@ def generate_batch_texts(examples):
     )['input_ids'].to(model.device)
     outputs = model.generate(
         input_ids,
-        max_new_tokens=128,
+        max_new_tokens=64,
         min_new_tokens=64,
         num_beams=5,
         repetition_penalty=3.0,
