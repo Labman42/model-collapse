@@ -1,7 +1,7 @@
 import os
 import math
 from itertools import chain
-from datasets import load_dataset, load_from_disk
+from datasets import concatenate_datasets, DatasetDict
 from dataset import prepare_data, preprocess_datasets
 from transformers import (
     AutoTokenizer,
@@ -54,8 +54,7 @@ trainer = Trainer(
 )
 
 print("Start Training!!")
-
-trainer.train()
+# trainer.train()
 
 # Step 4: Evaluate the Model
 def evaluate_model(trainer, dataset, description):
@@ -70,14 +69,9 @@ train_loss, train_perplexity = evaluate_model(trainer, train_dataset, 'Train')
 val_loss, val_perplexity = evaluate_model(trainer, val_dataset, 'Validation')
 test_loss, test_perplexity = evaluate_model(trainer, test_dataset, 'Test')
 
-# Step 5: Generate New Data
-generate_percentage = 0.1  # Adjust as needed
-num_examples = int(len(train_dataset) * generate_percentage)
-subset_dataset = train_dataset.select(range(num_examples))
 
 def generate_batch_texts(examples):
     input_ids = examples['input_ids']
-    # Ensure input_ids are tensors of equal length
     input_ids = tokenizer.pad(
         {'input_ids': input_ids},
         padding='longest',
@@ -88,33 +82,60 @@ def generate_batch_texts(examples):
         max_new_tokens=64,
         num_beams=5,
         repetition_penalty=3.0,
-        do_sample=True,
-        top_k=50,
-        top_p=0.95,
     )
     generated_ids = outputs[:, input_ids.shape[1]:]
     generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-    return {'generated_text': generated_texts}
+    return {'text': generated_texts}
 
 
 print("Start Generating!!")
-subset_dataset = subset_dataset.map(generate_batch_texts, batched=True, batch_size=8)
+# Step 5: Generate New Data
+generate_percentage = 0.3  # Adjust percentage as needed
+if generate_percentage > 0:
+    num_examples = int(len(train_dataset) * generate_percentage)
+    
+    # Select subset for generation
+    generated_subset = train_dataset.select(range(len(train_dataset) - num_examples, len(train_dataset)))
+    
+    # Generate new texts
+    generated_subset = generated_subset.map(generate_batch_texts, batched=True, batch_size=128)
+    
+    # Keep only the 'text' column
+    generated_subset = generated_subset.map(lambda x: {'text': x['text']}, remove_columns=generated_subset.column_names)
 
-def tokenize_generated_texts(examples):
-    tokenized = tokenizer(
-        examples['generated_text'],
-        truncation=True,
-        max_length=64,
-        return_special_tokens_mask=False,
-    )
-    tokenized['labels'] = tokenized['input_ids'].copy()
-    return tokenized
-
-new_dataset = subset_dataset.map(
-    tokenize_generated_texts,
-    batched=True,
-    remove_columns=subset_dataset.column_names,
+# Get the unused subset and retain only the 'text' column
+unused_subset = train_dataset.select(range(0, len(train_dataset) - num_examples))
+unused_subset = unused_subset.map(
+    lambda x: {'text': tokenizer.decode(x['input_ids'], skip_special_tokens=True)},
+    remove_columns=unused_subset.column_names
 )
 
-# Step 6: Save the Generated Data
-new_dataset.save_to_disk('generated_dataset')
+# Combine generated and unused subsets into a new dataset with only the 'text' feature
+combined_text_dataset = concatenate_datasets([unused_subset, generated_subset]) if generate_percentage > 0 else unused_subset
+
+# Tokenize the new dataset to prepare for training
+# def tokenize_combined_texts(examples):
+#     tokenized = tokenizer(
+#         examples['text'],
+#         truncation=True,
+#         max_length=64,
+#         return_special_tokens_mask=False,
+#     )
+#     tokenized['labels'] = tokenized['input_ids'].copy()
+#     return tokenized
+
+# processed_dataset = combined_text_dataset.map(
+#     tokenize_combined_texts,
+#     batched=True,
+#     remove_columns=['text'],
+# )
+
+# Combine with validation and test datasets to create a DatasetDict
+dataset_dict = DatasetDict({
+    'train': combined_text_dataset, 
+    'validation': raw_dataset['validation'], 
+    'test': raw_dataset['test']
+})
+
+# Step 6: Save the Combined Dataset
+dataset_dict.save_to_disk('generated_dataset')
