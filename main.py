@@ -1,6 +1,4 @@
-import os
 import math
-from itertools import chain
 from datasets import concatenate_datasets, DatasetDict
 from dataset import prepare_data, preprocess_datasets
 from transformers import (
@@ -79,7 +77,8 @@ def generate_batch_texts(examples):
     )['input_ids'].to(model.device)
     outputs = model.generate(
         input_ids,
-        max_new_tokens=64,
+        max_new_tokens=128,
+        min_new_tokens=64,
         num_beams=5,
         repetition_penalty=3.0,
     )
@@ -90,7 +89,7 @@ def generate_batch_texts(examples):
 
 print("Start Generating!!")
 # Step 5: Generate New Data
-generate_percentage = 0.3  # Adjust percentage as needed
+generate_percentage = 0.9  # Adjust percentage as needed
 if generate_percentage > 0:
     num_examples = int(len(train_dataset) * generate_percentage)
     
