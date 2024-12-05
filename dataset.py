@@ -69,6 +69,28 @@ def preprocess_datasets(
     )
     return dataset
 
+def preprocess_datasets_ungroup(
+        raw_dataset, 
+        tokenizer, 
+        overwrite_cache=False, 
+        preprocessing_num_workers=4):
+    column_names = raw_dataset['train'].column_names
+    text_column_name = "text" if "text" in column_names else column_names[0]
+
+    def tokenize_function(examples):
+        return tokenizer(examples[text_column_name])
+
+    tokenized_datasets = raw_dataset.map(
+        tokenize_function,
+        batched=True,
+        num_proc=preprocessing_num_workers,
+        remove_columns=column_names,
+        load_from_cache_file=not overwrite_cache,
+        desc="Running tokenizer on dataset",
+        keep_in_memory=True,
+    )
+    return tokenized_datasets
+
 def get_dataloader(tokenizer, context_len, batch_size=128, shuffle=True):
     raw_dataset = prepare_data()
     dataset = preprocess_datasets(
