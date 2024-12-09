@@ -2,7 +2,7 @@ import os
 import argparse
 import torch
 from datasets import concatenate_datasets, DatasetDict
-from dataset import prepare_data, preprocess_datasets_ungroup
+from dataset import prepare_data, preprocess_datasets_ungroup, preprocess_datasets
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -21,23 +21,41 @@ def find_single_checkpoint(directory):
     else:
         raise Exception(f"Expected exactly one folder in {directory}, but found {len(folders)}.")
 
+# def generate_batch_texts(examples):
+#     input_ids = examples['input_ids'][:64]
+#     input_ids = tokenizer.pad(
+#         {'input_ids': input_ids},
+#         padding='longest',
+#         return_tensors='pt'
+#     )['input_ids'].to(device)
+    
+#     # Generate outputs
+#     outputs = model.module.generate(  # Use `module` when using DataParallel
+#         input_ids,
+#         max_new_tokens=64,
+#         min_new_tokens=64,
+#         repetition_penalty=3.0,
+#     )
+
+#     generated_texts = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+#     return {'text': generated_texts}
+
 def generate_batch_texts(examples):
-    input_ids = examples['input_ids'][:64]
+    input_ids = examples['input_ids']
     input_ids = tokenizer.pad(
         {'input_ids': input_ids},
         padding='longest',
         return_tensors='pt'
     )['input_ids'].to(device)
-    
-    # Generate outputs
-    outputs = model.module.generate(  # Use `module` when using DataParallel
+    outputs = model.module.generate(
         input_ids,
-        max_new_tokens=512,
+        max_new_tokens=64,
         min_new_tokens=64,
+        num_beams=5,
         repetition_penalty=3.0,
     )
-
-    generated_texts = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    generated_ids = outputs[:, input_ids.shape[1]:]
+    generated_texts = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
     return {'text': generated_texts}
 
 
@@ -50,7 +68,7 @@ if __name__ == "__main__":
     OLD_VERSION = args.old
     NEW_VERSION = args.new
     # Path to the directory containing the checkpoint folder
-    checkpoints_dir = f"/fs/class-projects/fall2024/cmsc473/c473g001/results/{OLD_VERSION}"
+    checkpoints_dir = f"/fs/class-projects/fall2024/cmsc473/c473g001/base/{OLD_VERSION}"
 
     # Find the checkpoint folder
     try:
@@ -79,7 +97,7 @@ if __name__ == "__main__":
 
     # Load and preprocess the data
     raw_dataset = prepare_data()
-    tokenized_datasets = preprocess_datasets_ungroup(raw_dataset, tokenizer)
+    tokenized_datasets = preprocess_datasets(raw_dataset, tokenizer)
     train_dataset = tokenized_datasets['train']
     val_dataset = tokenized_datasets['validation']
     test_dataset = tokenized_datasets['test']
@@ -91,7 +109,7 @@ if __name__ == "__main__":
         
         generated_subset = train_dataset.select(range(len(train_dataset) - num_examples, len(train_dataset)))
         
-        generated_subset = generated_subset.map(generate_batch_texts, batched=True, batch_size=16)
+        generated_subset = generated_subset.map(generate_batch_texts, batched=True, batch_size=128)
         
         generated_subset = generated_subset.map(lambda x: {'text': x['text']}, remove_columns=generated_subset.column_names)
 

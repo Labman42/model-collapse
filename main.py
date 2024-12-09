@@ -1,4 +1,5 @@
 import math
+import os
 import argparse
 import json
 from datasets import concatenate_datasets, DatasetDict
@@ -18,25 +19,55 @@ def evaluate_model(trainer, dataset, description):
     print(f"{description} loss: {loss:.4f}, perplexity: {perplexity:.2f}")
     return loss, perplexity
 
-
+def find_single_checkpoint(directory):
+    # List all entries in the directory
+    entries = os.listdir(directory)
+    
+    # Filter for directories only
+    folders = [entry for entry in entries if os.path.isdir(os.path.join(directory, entry))]
+    
+    # Check if there's exactly one folder
+    if len(folders) == 1:
+        return os.path.join(directory, folders[0])
+    else:
+        raise Exception(f"Expected exactly one folder in {directory}, but found {len(folders)}.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the opt with dirty data.")
+    parser.add_argument("old", type=str, help="Path to the directory containing the checkpoint folder")
     parser.add_argument("directory", type=str, help="Path to the directory containing the checkpoint folder")
     args = parser.parse_args()
 
+
+    OLD_VERSION = args.old
     VERSION = args.directory
     CACHE_DIR = '/fs/class-projects/fall2024/cmsc473/c473g001/'
 
     # Step 1: Load Tokenizer and Model
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-125m", cache_dir=CACHE_DIR+'cache')
-    model = AutoModelForCausalLM.from_pretrained("facebook/opt-125m", cache_dir=CACHE_DIR+'cache')
-    # model = AutoModelForCausalLM.from_pretrained("/fs/class-projects/fall2024/cmsc473/c473g001/results/checkpoint-4590")
+    checkpoints_dir = f"/fs/class-projects/fall2024/cmsc473/c473g001/base/{OLD_VERSION}"
+
+    # Find the checkpoint folder
+    try:
+        checkpoint_path = find_single_checkpoint(checkpoints_dir)
+        print(f"The checkpoint folder is: {checkpoint_path}")
+    except Exception as e:
+        print(str(e))
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        "facebook/opt-125m", 
+        cache_dir='/fs/class-projects/fall2024/cmsc473/c473g001/cache/'
+    )
+    tokenizer.padding_side = "left"  # Ensure left-padding for decoder-only models
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint_path,
+        # torch_dtype=torch.float16,
+        # attn_implementation="flash_attention_2"
+    )
 
 
     # Load and preprocess the data
-    raw_dataset = prepare_data(path=f"./generated_dataset_{VERSION}")
-    tokenized_datasets = preprocess_datasets_ungroup(raw_dataset, tokenizer)
+    raw_dataset = prepare_data(path=f"./generated_dataset_{OLD_VERSION}")
+    tokenized_datasets = preprocess_datasets(raw_dataset, tokenizer)
     train_dataset = tokenized_datasets['train']
     val_dataset = tokenized_datasets['validation']
     test_dataset = tokenized_datasets['test']
@@ -48,13 +79,12 @@ if __name__ == "__main__":
 
     # Step 3: Fine-tune the Model
     training_args = TrainingArguments(
-        output_dir=f"/fs/class-projects/fall2024/cmsc473/c473g001/results/{VERSION}",
+        output_dir=f"/fs/class-projects/fall2024/cmsc473/c473g001/base/{VERSION}",
         overwrite_output_dir=True,
         num_train_epochs=5,  # Adjust as needed
         learning_rate=2e-5,
-        gradient_accumulation_steps=2,
-        per_device_train_batch_size=4,
-        per_device_eval_batch_size=4,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
         evaluation_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="epoch",
